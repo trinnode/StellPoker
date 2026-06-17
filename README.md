@@ -7,9 +7,18 @@ Onchain Texas Hold'em poker on Stellar with cryptographically private cards usin
 
 No single party ever sees the full deck. A 3-node MPC committee (TACEO coNoir) shuffles and deals cards using REP3 secret sharing. UltraHonk ZK proofs verify every deal, reveal, and showdown onchain via Soroban's native BN254 host functions.
 
-**[Live Demo](https://stell-poker.vercel.app)** · [Slide Deck](https://www.canva.com/design/DAHB5JrdEAk/XThK1QgbEATHwZ0rX-W2aA/view?utm_content=DAHB5JrdEAk&utm_campaign=designshare&utm_medium=link2&utm_source=uniquelinks&utlId=hb4aca74548)
+**[Live Demo](https://stell-poker.vercel.app)** · [Demo Video](#) · [Slide Deck](https://www.canva.com/design/DAHB5JrdEAk/XThK1QgbEATHwZ0rX-W2aA/view?utm_content=DAHB5JrdEAk&utm_campaign=designshare&utm_medium=link2&utm_source=uniquelinks&utlId=hb4aca74548)
 
 ![Gameplay](assets/game.png)
+
+## Stellar Protocol 25 & 26
+
+Stellar Poker is built directly on top of the cryptographic primitives introduced in Stellar's recent protocol upgrades:
+
+- **Protocol 25 (X-Ray)** introduced native BN254 elliptic-curve operations and Poseidon2 hashing as Soroban host functions. The `zk-verifier` contract uses these to verify UltraHonk proofs onchain at a fraction of the cost of a pure-Rust implementation.
+- **Protocol 26 (Yardstick)** added multi-scalar multiplication, scalar-field arithmetic, and curve-membership checks. These are used inside the verifier's Shplemini opening scheme, which is the most compute-intensive part of UltraHonk verification.
+
+Without these host functions, onchain UltraHonk verification would exceed Soroban's instruction budget. Protocol 25 and 26 are what make this project possible.
 
 ## Why ZK alone is not enough
 
@@ -162,6 +171,30 @@ NETWORK=testnet ./scripts/deploy.sh
 - **Private**: `hole_cards`, `board_cards`, `salts`
 - **Public**: `hand_commitments`, `board_commitments`, `declared_winner`
 - **Proves**: Cards match commitments, hand evaluation is correct, winner has best hand.
+
+## What is live vs mocked in the demo
+
+The live demo at [stell-poker.vercel.app](https://stell-poker.vercel.app) runs against Stellar testnet. Here is exactly what is live and what is simulated:
+
+| Component | Status | Notes |
+|---|---|---|
+| Soroban contracts | ✅ Live on testnet | Poker table, ZK verifier, committee registry all deployed |
+| ZK proof verification | ✅ Live onchain | `zk-verifier` contract verifies real UltraHonk proofs via BN254 host functions |
+| Frontend | ✅ Live | Hosted on Vercel, connects to testnet via Freighter wallet |
+| Solo mode (vs AI) | ✅ Fully functional | Deals, betting, showdown, and settlement all work end-to-end |
+| MPC nodes (multiplayer) | ⚠️ Demo infrastructure | 3 TACEO coNoir nodes run for demo purposes; in production these would be independently operated |
+| Multiplayer (2–6 players) | ✅ Functional | Requires all players to have Freighter and testnet XLM |
+
+The ZK proofs in solo mode are generated and verified onchain in every hand — this is not mocked.
+
+## Beyond poker: generalising the pattern
+
+The technical patterns in this project are directly applicable to real-world use cases:
+
+- **MPC committee + ZK verification** — the same architecture works for any multi-party secret: sealed-bid auctions, private voting, threshold key custody, blind RFQ matching in DeFi.
+- **`stellar-zk-cards`** — the card encoding, commitment, and hand evaluation library is a standalone Rust crate any Soroban app can use for any card or tile-based game.
+- **Onchain UltraHonk verifier** — the `zk-verifier` contract is a general-purpose Noir proof verifier. Any Noir circuit can be verified through it by swapping the verification key.
+- **REP3 secret sharing via coNoir** — the node and coordinator services are structured to be reused for any coSNARK application, not just poker.
 
 ## License
 
