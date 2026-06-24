@@ -2,7 +2,13 @@
 name = "stellar-zk-cards"
 version = "0.1.0"
 edition = "2021"
-description = "Reusable ZK card game primitives for Stellar/Soroban"
+description = "Reusable ZK card-game primitives for Stellar/Soroban — card encoding, hand evaluation, and commitment helpers for Texas Hold'em and other card games."
+license = "MIT"
+repository = "https://github.com/HitEmPoka/StellPoker"
+readme = "README.md"
+keywords = ["stellar", "soroban", "poker", "cards", "zk"]
+categories = ["cryptography", "game-engines", "no-std"]
+exclude = ["/.github"]
 
 [dependencies]
 soroban-sdk = { workspace = true }
