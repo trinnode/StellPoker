@@ -1,0 +1,36 @@
+name: Publish stellar-zk-cards
+
+on:
+  push:
+    tags:
+      - "stellar-zk-cards/v*"   # e.g. stellar-zk-cards/v0.1.1
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-publish-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check crate
+        run: cargo check -p stellar-zk-cards
+
+      - name: Test crate
+        run: cargo test -p stellar-zk-cards
+
+      - name: Publish
+        run: cargo publish -p stellar-zk-cards --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

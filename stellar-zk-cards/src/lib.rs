@@ -1,21 +1,110 @@
+//! # stellar-zk-cards
+//!
+//! Reusable ZK card-game primitives for [Stellar Soroban](https://soroban.stellar.org) smart contracts.
+//!
+//! This crate provides:
+//!
+//! - A compact 6-bit card encoding (`0`–`51`) compatible with BN254 field elements
+//!   used in Noir ZK circuits.
+//! - Best-of-seven hand evaluation for Texas Hold'em (2 hole cards + 5 board cards).
+//! - [`HandCategory`] and [`HandRank`] types that are directly comparable on-chain.
+//!
+//! ## Card encoding
+//!
+//! Cards are encoded as `suit * 13 + rank`:
+//!
+//! | Suit | Value |
+//! |------|-------|
+//! | Clubs    | 0 |
+//! | Diamonds | 1 |
+//! | Hearts   | 2 |
+//! | Spades   | 3 |
+//!
+//! | Rank | Value |
+//! |------|-------|
+//! | 2–10 | 0–8   |
+//! | J    | 9     |
+//! | Q    | 10    |
+//! | K    | 11    |
+//! | A    | 12    |
+//!
+//! ## Usage (Soroban contract)
+//!
+//! ```rust,ignore
+//! use stellar_zk_cards::{Card, evaluate_hand, HandCategory};
+//!
+//! // Build hole cards and board
+//! let hole1 = Card::new(3, 12); // Ace of Spades
+//! let hole2 = Card::new(2, 12); // Ace of Hearts
+//! let board = [
+//!     Card::new(0, 12), // Ace of Clubs
+//!     Card::new(1, 12), // Ace of Diamonds
+//!     Card::new(0, 11), // King of Clubs
+//!     Card::new(1, 11), // King of Diamonds
+//!     Card::new(2, 11), // King of Hearts
+//! ];
+//!
+//! let all_seven = [
+//!     hole1.value, hole2.value,
+//!     board[0].value, board[1].value, board[2].value,
+//!     board[3].value, board[4].value,
+//! ];
+//!
+//! let rank = evaluate_hand(&all_seven);
+//! assert_eq!(rank.category(), HandCategory::FourOfAKind as u32);
+//! ```
+
 #![no_std]
 
 use soroban_sdk::contracttype;
 
-/// Card encoding: suit * 13 + rank
-/// suit: 0=Clubs, 1=Diamonds, 2=Hearts, 3=Spades
-/// rank: 0=2, 1=3, ..., 8=10, 9=J, 10=Q, 11=K, 12=A
+/// Total number of cards in a standard deck.
 pub const DECK_SIZE: u32 = 52;
+
+/// Number of suits (Clubs, Diamonds, Hearts, Spades).
 pub const NUM_SUITS: u32 = 4;
+
+/// Number of ranks per suit (2 through Ace).
 pub const NUM_RANKS: u32 = 13;
 
+/// A single playing card encoded as `suit * 13 + rank` in the range `0..=51`.
+///
+/// This compact encoding fits in 6 bits and is compatible with BN254 field
+/// elements used by the Noir ZK circuits in the Stellar Poker MPC committee.
+///
+/// # Suit encoding
+/// - `0` = Clubs
+/// - `1` = Diamonds
+/// - `2` = Hearts
+/// - `3` = Spades
+///
+/// # Rank encoding
+/// - `0`–`8` = 2–10
+/// - `9` = Jack, `10` = Queen, `11` = King, `12` = Ace
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use stellar_zk_cards::Card;
+///
+/// let ace_of_spades = Card::new(3, 12);
+/// assert_eq!(ace_of_spades.value, 51);
+/// assert_eq!(ace_of_spades.suit(), 3);
+/// assert_eq!(ace_of_spades.rank(), 12);
+/// ```
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Card {
-    pub value: u32, // 0-51
+    /// Raw card value in the range `0..=51` (`suit * 13 + rank`).
+    pub value: u32,
 }
 
 impl Card {
+    /// Construct a [`Card`] from a suit (`0`–`3`) and rank (`0`–`12`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `suit >= 4` or `rank >= 13`.
     pub fn new(suit: u32, rank: u32) -> Self {
         assert!(suit < NUM_SUITS, "invalid suit");
         assert!(rank < NUM_RANKS, "invalid rank");
@@ -24,64 +113,139 @@ impl Card {
         }
     }
 
+    /// Returns the suit of this card (`0` = Clubs … `3` = Spades).
     pub fn suit(&self) -> u32 {
         self.value / NUM_RANKS
     }
 
+    /// Returns the rank of this card (`0` = 2 … `12` = Ace).
     pub fn rank(&self) -> u32 {
         self.value % NUM_RANKS
     }
 
+    /// Returns `true` if the card value is within the valid range `0..=51`.
     pub fn is_valid(&self) -> bool {
         self.value < DECK_SIZE
     }
 }
 
-/// Hand ranking categories (higher = better)
+/// Hand ranking categories for Texas Hold'em, ordered from worst to best.
+///
+/// The numeric `repr` values match the tiebreaker encoding used in [`HandRank`]:
+/// higher is always better, so a simple integer comparison determines the winner.
+///
+/// | Category       | Example           |
+/// |----------------|-------------------|
+/// | `HighCard`     | A K Q J 9         |
+/// | `OnePair`      | A A K Q J         |
+/// | `TwoPair`      | A A K K Q         |
+/// | `ThreeOfAKind` | A A A K Q         |
+/// | `Straight`     | A K Q J T         |
+/// | `Flush`        | A K Q J 9 (same suit) |
+/// | `FullHouse`    | A A A K K         |
+/// | `FourOfAKind`  | A A A A K         |
+/// | `StraightFlush`| 9 8 7 6 5 (same suit) |
+/// | `RoyalFlush`   | A K Q J T (same suit) |
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum HandCategory {
+    /// No pair; winner determined by highest card.
     HighCard = 0,
+    /// Exactly two cards of the same rank.
     OnePair = 1,
+    /// Two distinct pairs.
     TwoPair = 2,
+    /// Three cards of the same rank.
     ThreeOfAKind = 3,
+    /// Five consecutive ranks (ace-low or ace-high).
     Straight = 4,
+    /// Five cards of the same suit.
     Flush = 5,
+    /// Three of a kind plus a pair.
     FullHouse = 6,
+    /// Four cards of the same rank.
     FourOfAKind = 7,
+    /// Five consecutive ranks of the same suit.
     StraightFlush = 8,
+    /// A-K-Q-J-T of the same suit.
     RoyalFlush = 9,
 }
 
-/// A hand ranking that can be compared. Higher value = better hand.
-/// Format: category (top 4 bits) | tiebreaker (bottom 28 bits)
+/// A comparable hand strength value produced by [`evaluate_hand`].
+///
+/// Internally encoded as:
+/// ```text
+/// score = category (top 4 bits) | tiebreaker (bottom 28 bits)
+/// ```
+///
+/// This means any two [`HandRank`] values from valid 5-card hands can be
+/// compared with a single integer comparison — the higher score wins.
+///
+/// Use [`HandRank::beats`] for a readable comparison, or compare
+/// `score` fields directly in Soroban contract logic.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HandRank {
+    /// Packed score: `(category << 28) | tiebreaker`.
     pub score: u32,
 }
 
 impl HandRank {
+    /// Construct a [`HandRank`] from a category index (`0`–`9`) and a
+    /// tiebreaker value (at most 28 bits).
     pub fn new(category: u32, tiebreaker: u32) -> Self {
         HandRank {
             score: (category << 28) | (tiebreaker & 0x0FFF_FFFF),
         }
     }
 
+    /// Extract the [`HandCategory`] index from this rank (`0`–`9`).
+    ///
+    /// Compare against [`HandCategory`] variant values to identify the hand.
     pub fn category(&self) -> u32 {
         self.score >> 28
     }
 
+    /// Returns `true` if this hand is strictly stronger than `other`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use stellar_zk_cards::evaluate_hand;
+    ///
+    /// let royal  = evaluate_hand(&[8, 9, 10, 11, 12, 13, 14]);
+    /// let sf     = evaluate_hand(&[3, 4,  5,  6,  7, 13, 14]);
+    /// assert!(royal.beats(&sf));
+    /// ```
     pub fn beats(&self, other: &HandRank) -> bool {
         self.score > other.score
     }
 }
 
-/// Evaluate the best 5-card hand from 7 cards (2 hole + 5 board).
-/// Returns a HandRank that can be compared to determine winner.
+/// Evaluate the best 5-card hand from a 7-card array (2 hole + 5 board).
 ///
-/// Cards are passed as an array of 7 card values (0-51).
+/// Iterates all C(7,5) = 21 five-card combinations and returns the highest
+/// [`HandRank`]. The result is deterministic and requires no heap allocation,
+/// making it suitable for on-chain use inside Soroban contracts.
+///
+/// # Arguments
+///
+/// * `cards` — seven card values in the range `0..=51` in any order.
+///
+/// # Returns
+///
+/// The [`HandRank`] of the best possible 5-card hand. Higher `score` = stronger hand.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use stellar_zk_cards::{evaluate_hand, HandCategory};
+///
+/// // Pocket aces + board gives four aces
+/// let rank = evaluate_hand(&[12, 25, 0, 13, 26, 39, 11]);
+/// assert_eq!(rank.category(), HandCategory::FourOfAKind as u32);
+/// ```
 pub fn evaluate_hand(cards: &[u32; 7]) -> HandRank {
     let mut best_score: u32 = 0;
 
@@ -107,7 +271,7 @@ pub fn evaluate_hand(cards: &[u32; 7]) -> HandRank {
     HandRank { score: best_score }
 }
 
-/// Evaluate exactly 5 cards.
+/// Evaluate exactly 5 cards and return their [`HandRank`].
 fn evaluate_five(cards: &[u32; 5]) -> HandRank {
     let mut ranks = [0u32; 5];
     let mut suits = [0u32; 5];
